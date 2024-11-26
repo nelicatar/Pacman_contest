@@ -115,7 +115,6 @@ class CaptureAgent(Agent):
         self.red = game_state.is_on_red_team(self.index)
         self.register_team(self.get_team(game_state))
         self.distancer = distance_calculator.Distancer(game_state.data.layout)
-
         # comment this out to forgo maze distance computation and use manhattan distances
         self.distancer.get_maze_distances()
 
