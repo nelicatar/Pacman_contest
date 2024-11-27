@@ -75,26 +75,30 @@ def state_to_feature(agent, game_state):
     distance_to_home = []
     action_dirs = [[0, -1], [1, 0], [0, 1], [-1, 0]]
     pos = agent.intify(game_state.data.agent_states[agent.index].configuration.pos)
+    distance_to_food_curr = agent.closest_food(game_state, pos)[0]
+    distance_to_home_curr = agent.maze_distance(pos, agent.start)
+
     for action in action_dirs:
         npos = (pos[0]+action[0], pos[1]+action[1])
         if game_state.data.layout.walls.data[npos[0]][npos[1]]:
             distance_to_food.append(-1)
             distance_to_home.append(-1)
             continue
-        distance_to_food.append(1/agent.closest_food(game_state, pos)[0])
-        distance_to_home.append(1/(agent.maze_distance(pos, agent.start)+1))
+        distance_to_food.append((agent.closest_food(game_state, npos)[0] - distance_to_food_curr))
+        distance_to_home.append((agent.maze_distance(npos, agent.start) - distance_to_home_curr))
     opps = agent.get_opponents(game_state)
     dist_to_opps = []
     for opp in opps:
         if game_state.data.agent_states[opp].configuration is not None:
             opp_pos = game_state.data.agent_states[opp].configuration.pos
-            dist_to_opps.append(1/agent.maze_distance(pos, opp_pos))
+            dist_to_opps.append(1/(agent.maze_distance(pos, opp_pos)+1))
         else:
-            dist_to_opps.append(1/game_state.agent_distances[opp])
+            dist_to_opps.append(1/(game_state.agent_distances[opp]+1))
     
     extra_features = []
     extra_features.append(game_state.data.agent_states[agent.index].num_carrying)
     extra_features.append(1/(game_state.data.agent_states[agent.index].scared_timer+1))
+    extra_features.append(int(game_state.data.agent_states[agent.index].is_pacman))
     return np.array(distance_to_food + distance_to_home + dist_to_opps + extra_features)
 
 
@@ -136,49 +140,49 @@ class DQN(nn.Module):
 
     def __init__(self):
         super(DQN, self).__init__()
-        self.conv2d = nn.Conv2d(2, 10, (6, 4))
-        self.conv2d2 = nn.Conv2d(10, 3, (4, 3))
+        # self.conv2d = nn.Conv2d(2, 10, (6, 4))
+        # self.conv2d2 = nn.Conv2d(10, 3, (4, 3))
 
-        self.layer1 = nn.Linear(36, 64)
-        self.layer2 = nn.Linear(64, 32)
-        self.layer3 = nn.Linear(32, 5)
+        self.layer1 = nn.Linear(13, 128)
+        self.layer2 = nn.Linear(128, 128)
+        self.layer3 = nn.Linear(128, 5)
 
     # Called with either one element to determine next action, or a batch
     # during optimization. Returns tensor([[left0exp,right0exp]...]).
-    def forward(self, x, f):
-        x = F.relu(F.max_pool2d(self.conv2d(x), (2,2)))
-        x = F.relu(F.max_pool2d(self.conv2d2(x), (3,3)))
-        x = torch.flatten(x, x.dim()-3)
-        x = torch.cat((x, f), x.dim()-1)
+    def forward(self, x):
+        # x = F.relu(F.max_pool2d(self.conv2d(x), (2,2)))
+        # x = F.relu(F.max_pool2d(self.conv2d2(x), (3,3)))
+        # x = torch.flatten(x, x.dim()-3)
+        # x = torch.cat((x, f), x.dim()-1)
         x = F.relu(self.layer1(x))
         x = F.relu(self.layer2(x))
         return self.layer3(x)
     
 BATCH_SIZE = 128
 GAMMA = 0.95
-TAU = 0.01
-LR = 1e-4
-EPSILON = 0.7
+TAU = 0.005
+LR = 0.002
+EPSILON = 0.8
 
 
 def optimize_model(agent):
     if len(agent.memory) < BATCH_SIZE:
         return
     transitions = agent.memory.sample(BATCH_SIZE)
-    state_batch = torch.tensor(np.array([state for (state, _, _, _, _, _, _) in transitions]), dtype=torch.float32)
+    # state_batch = torch.tensor(np.array([state for (state, _, _, _, _, _, _) in transitions]), dtype=torch.float32)
     f1 = torch.tensor(np.array([f1 for (_, f1, _, _, _, _, _) in transitions]), dtype=torch.float32)
     action_batch = torch.tensor([[action] for (_, _, action, _, _, _, _) in transitions])
     reward_batch =  torch.tensor([reward for (_, _, _, reward, _, _, _) in transitions])
-    next_state_batch = torch.tensor(np.array([s2 for (_, _, _, _, s2, _, _) in transitions]), dtype=torch.float32)
+    # next_state_batch = torch.tensor(np.array([s2 for (_, _, _, _, s2, _, _) in transitions]), dtype=torch.float32)
     f2 = torch.tensor(np.array([f2 for (_, _, _, _, _, f2, _) in transitions]), dtype=torch.float32)
     acs = [a for (_, _, _, _, _, _, a) in transitions]
 
 
-    state_qvalues = agent.policy_net(state_batch, f1)
+    state_qvalues = agent.policy_net(f1)
     state_action_values = state_qvalues.squeeze(1).gather(1, action_batch).squeeze(1)
 
     with torch.no_grad():
-        next_qvalues = agent.target_net(next_state_batch, f2).squeeze(1).data
+        next_qvalues = agent.target_net(f2).squeeze(1).data
         next_state_values = []
         for i, a_index in enumerate(acs):
             next_state_values.append(max([next_qvalues[i, a] for a in a_index]))
@@ -279,10 +283,11 @@ class ReflexCaptureAgent(CaptureAgent):
         #     "mps" if torch.backends.mps.is_available() else
         #     "cpu"
         # )
-        self.policy_net = DQN()
-        self.policy_net.load_state_dict(torch.load(MODEL_PATH, weights_only=True))
         self.target_net = DQN()
-        self.target_net.load_state_dict(self.policy_net.state_dict())  
+        self.target_net.load_state_dict(torch.load(MODEL_PATH, weights_only=True))
+        self.policy_net = DQN()
+        # self.policy_net.load_state_dict(self.target_net.state_dict())
+        self.policy_net.load_state_dict(torch.load(MODEL_PATH+"_policy", weights_only=True))
         self.optimizer = optim.AdamW(self.policy_net.parameters(), lr=LR, amsgrad=True)
 
     def register_initial_state(self, game_state):
@@ -425,6 +430,8 @@ class OffensiveReflexAgent(ReflexCaptureAgent):
             with open(ATTACK_MEMORY_PATH, 'wb') as f:
                 pickle.dump(self.memory.memory, f)
             torch.save(self.target_net.state_dict(), MODEL_PATH)
+            torch.save(self.policy_net.state_dict(), MODEL_PATH+"_policy")
+
         if len(self.observation_history) > 1:
             (s1, f1, action, reward, s2, f2, acs) = get_transition(self)
             self.memory.push((s1, f1, action, reward, s2, f2, acs))
@@ -432,9 +439,10 @@ class OffensiveReflexAgent(ReflexCaptureAgent):
         with torch.no_grad():
             input = state_to_pic(self, game_state)
             f = state_to_feature(self, game_state)
-            res = self.target_net(torch.tensor(input, dtype=torch.float32), torch.tensor(f, dtype=torch.float32))
+            print(f)
+            res = self.target_net(torch.tensor(f, dtype=torch.float32))
             print(res)
-            actions = game_state.get_legal_actions(self.index)
+            actions = game_state.get_legal_actions(self.index)[:-1]
             ids = [get_action_index(action) for action in actions]
             values = [res[id] for id in ids]
             if random.random() < EPSILON:
