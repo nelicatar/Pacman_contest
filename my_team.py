@@ -67,7 +67,7 @@ def get_attacker_reward(agent, s1, s2):
     returned = agent_state_2.num_returned - agent_state_1.num_returned
     
     features = [killed, died, collected, returned, food_dist_d, stationary]
-    weights = [25, -25, 2, 20, 1, -0.01]
+    weights = [0, -25, 2, 20, 1, -0.01]
     return np.dot(features, weights)
 
 def state_to_feature(agent, game_state):
@@ -99,29 +99,37 @@ def state_to_feature(agent, game_state):
     extra_features.append(game_state.data.agent_states[agent.index].num_carrying)
     extra_features.append(1/(game_state.data.agent_states[agent.index].scared_timer+1))
     extra_features.append(int(game_state.data.agent_states[agent.index].is_pacman))
+    extra_features.append(1/(distance_to_food_curr+1))
+    extra_features.append(1/(distance_to_home_curr+1))
     return np.array(distance_to_food + distance_to_home + dist_to_opps + extra_features)
 
 
 
 
+
 def state_to_pic(agent, game_state):
+    view_around = (6,6)
+    pos = agent.intify(game_state.data.agent_states[agent.index].configuration.pos)
+    pic = np.zeros((2, 2*view_around[0]+1, 2*view_around[1]+1))
     walls = game_state.data.layout.walls.data
-    full_shape = (2, 36, 20)
-    shape = (2, len(walls), len(walls[0]))
-    xdelta = (full_shape[1]-shape[1])//2
-    ydelta = (full_shape[2]-shape[2])//2
-    pic = np.zeros(full_shape)
-    pic[0,xdelta:-xdelta,ydelta:-ydelta] += 1*np.array(walls)
     foods = agent.get_food(game_state)
-    pic[1,xdelta:-xdelta,ydelta:-ydelta] += 0.5* np.array(foods.data)
-    pos = game_state.data.agent_states[agent.index].configuration.pos
-    pic[1, xdelta + int(pos[0]), ydelta + int(pos[1])] = 1
+    for di in range(-view_around[0], view_around[0]+1):
+        for dj in range(-view_around[1], view_around[1]+1):
+            npos = (pos[0]+di, pos[1]+dj)
+            if npos[0] < 0 or npos[0] >= len(walls) or npos[1] < 0 or npos[1] >= len(walls[0]):
+                continue
+            pic[0,view_around[0]+di, view_around[1]+dj] = int(walls[npos[0]][npos[1]])
+            pic[1,view_around[0]+di, view_around[1]+dj] = int(foods[npos[0]][npos[1]])
     opponents = agent.get_opponents(game_state)
     for opp in opponents:
         agent_s =  game_state.data.agent_states[opp]
         if agent_s.configuration is not None:
-            pos = agent_s.configuration.pos
-            pic[1, xdelta + int(pos[0]), ydelta + int(pos[1])] = -1
+            epos = agent.intify(agent_s.configuration.pos)
+            if abs(epos[0]-pos[0]) > view_around[0]:
+                continue
+            if abs(epos[1]-pos[1]) > view_around[1]:
+                continue
+            pic[1, view_around[0] + epos[0] - pos[0], view_around[1] + epos[1] - pos[1]] = -1
     return pic
 
 def get_transition(agent):
@@ -140,20 +148,19 @@ class DQN(nn.Module):
 
     def __init__(self):
         super(DQN, self).__init__()
-        # self.conv2d = nn.Conv2d(2, 10, (6, 4))
-        # self.conv2d2 = nn.Conv2d(10, 3, (4, 3))
+        self.conv2d = nn.Conv2d(2, 4, (4, 4))
+        self.conv2d2 = nn.Conv2d(4, 8, (3, 3))
 
-        self.layer1 = nn.Linear(13, 128)
+        self.layer1 = nn.Linear(143, 128)
         self.layer2 = nn.Linear(128, 128)
         self.layer3 = nn.Linear(128, 5)
 
-    # Called with either one element to determine next action, or a batch
-    # during optimization. Returns tensor([[left0exp,right0exp]...]).
-    def forward(self, x):
-        # x = F.relu(F.max_pool2d(self.conv2d(x), (2,2)))
-        # x = F.relu(F.max_pool2d(self.conv2d2(x), (3,3)))
-        # x = torch.flatten(x, x.dim()-3)
-        # x = torch.cat((x, f), x.dim()-1)
+    def forward(self, x, f):
+        x = F.relu(self.conv2d(x))
+        x = F.relu(self.conv2d2(x))
+        x = F.max_pool2d(x, (2,2))
+        x = torch.flatten(x, x.dim()-3)
+        x = torch.cat((x, f), x.dim()-1)
         x = F.relu(self.layer1(x))
         x = F.relu(self.layer2(x))
         return self.layer3(x)
@@ -161,28 +168,28 @@ class DQN(nn.Module):
 BATCH_SIZE = 128
 GAMMA = 0.95
 TAU = 0.005
-LR = 0.002
-EPSILON = 0.8
+LR = 0.001
+EPSILON = 0.6
 
 
 def optimize_model(agent):
     if len(agent.memory) < BATCH_SIZE:
         return
     transitions = agent.memory.sample(BATCH_SIZE)
-    # state_batch = torch.tensor(np.array([state for (state, _, _, _, _, _, _) in transitions]), dtype=torch.float32)
+    state_batch = torch.tensor(np.array([state for (state, _, _, _, _, _, _) in transitions]), dtype=torch.float32)
     f1 = torch.tensor(np.array([f1 for (_, f1, _, _, _, _, _) in transitions]), dtype=torch.float32)
     action_batch = torch.tensor([[action] for (_, _, action, _, _, _, _) in transitions])
     reward_batch =  torch.tensor([reward for (_, _, _, reward, _, _, _) in transitions])
-    # next_state_batch = torch.tensor(np.array([s2 for (_, _, _, _, s2, _, _) in transitions]), dtype=torch.float32)
+    next_state_batch = torch.tensor(np.array([s2 for (_, _, _, _, s2, _, _) in transitions]), dtype=torch.float32)
     f2 = torch.tensor(np.array([f2 for (_, _, _, _, _, f2, _) in transitions]), dtype=torch.float32)
     acs = [a for (_, _, _, _, _, _, a) in transitions]
 
 
-    state_qvalues = agent.policy_net(f1)
+    state_qvalues = agent.policy_net(state_batch, f1)
     state_action_values = state_qvalues.squeeze(1).gather(1, action_batch).squeeze(1)
 
     with torch.no_grad():
-        next_qvalues = agent.target_net(f2).squeeze(1).data
+        next_qvalues = agent.target_net(next_state_batch, f2).squeeze(1).data
         next_state_values = []
         for i, a_index in enumerate(acs):
             next_state_values.append(max([next_qvalues[i, a] for a in a_index]))
@@ -439,8 +446,9 @@ class OffensiveReflexAgent(ReflexCaptureAgent):
         with torch.no_grad():
             input = state_to_pic(self, game_state)
             f = state_to_feature(self, game_state)
+            print(input)
             print(f)
-            res = self.target_net(torch.tensor(f, dtype=torch.float32))
+            res = self.target_net(torch.tensor(input, dtype=torch.float32), torch.tensor(f, dtype=torch.float32))
             print(res)
             actions = game_state.get_legal_actions(self.index)[:-1]
             ids = [get_action_index(action) for action in actions]
