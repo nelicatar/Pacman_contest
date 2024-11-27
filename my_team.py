@@ -168,7 +168,7 @@ class DQN(nn.Module):
 BATCH_SIZE = 128
 GAMMA = 0.95
 TAU = 0.005
-LR = 0.001
+LR = 0.0005
 EPSILON = 0.6
 
 
