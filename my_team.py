@@ -139,7 +139,7 @@ def get_transition(agent):
     s2 = agent.observation_history[-1]
     action = get_action_index(s2.data.agent_states[agent.index].configuration.direction)
     reward = get_attacker_reward(agent, s1, s2)
-    print(reward)
+    # print(reward)
     available_actions = [get_action_index(name) for name in s2.get_legal_actions(agent.index)]
     return (state_to_pic(agent, s1), state_to_feature(agent, s1), action, reward, 
             state_to_pic(agent, s2), state_to_feature(agent, s2), available_actions)
@@ -446,16 +446,16 @@ class OffensiveReflexAgent(ReflexCaptureAgent):
         with torch.no_grad():
             input = state_to_pic(self, game_state)
             f = state_to_feature(self, game_state)
-            print(input)
-            print(f)
+            # print(input)
+            # print(f)
             res = self.target_net(torch.tensor(input, dtype=torch.float32), torch.tensor(f, dtype=torch.float32))
-            print(res)
+            # print(res)
             actions = game_state.get_legal_actions(self.index)[:-1]
             ids = [get_action_index(action) for action in actions]
             values = [res[id] for id in ids]
             if random.random() < EPSILON:
                 move = ids[np.argmax(values)]
-                print(move)
+                # print(move)
             else:
                 move = np.random.choice(ids)
             action = get_action_name(move)
