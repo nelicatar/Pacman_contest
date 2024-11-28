@@ -325,8 +325,9 @@ class ReflexCaptureAgent(CaptureAgent):
         try:
             self.target_net.load_state_dict(torch.load(MODEL_PATH, weights_only=True))
         except Exception as e:
+            if not TRAINING:
+                raise(Exception(e))
             print("Cannot find target net")
-            pass
         if TRAINING:
             self.policy_net = DQN().to(self.device)
             try:
