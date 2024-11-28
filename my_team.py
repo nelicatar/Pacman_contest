@@ -22,6 +22,9 @@ import torch.optim as optim
 import torch.nn.functional as F
 import pickle
 
+TRAINING = True
+NETWORK_DISTANCE = 0.65
+
 def get_action_index(action):
     if action == "South":
         return 0
@@ -32,6 +35,17 @@ def get_action_index(action):
     if action == "West":
         return 3
     return 4
+
+def invert_action(action):
+    if action == "South":
+        return "North"
+    if action == "North":
+        return "South"
+    if action == "West":
+        return "East"
+    if action == "East":
+        return "West"
+    return action
 
 def get_action_name(index):
     actions = ["South", "East", "North", "West", "Stop"]
@@ -49,6 +63,11 @@ def get_attacker_reward(agent, s1, s2):
     dist1 = agent.closest_food(s1, pos1)[0]
 
     food_dist_d =  (dist1 - dist2) * (1/dist2)**1.5
+
+    dist2 = agent.maze_distance(pos2, agent.start)
+    dist1 = agent.maze_distance(pos1, agent.start)
+    home_dist_d = (dist1 - dist2) 
+
     moved = agent.maze_distance(pos1, pos2)
     stationary = (1 if moved == 0 else 0)
     died = (1 if agent_state_2.configuration.pos == agent.start and moved > 1 else 0)
@@ -66,14 +85,17 @@ def get_attacker_reward(agent, s1, s2):
     collected = max(0, collected)
     returned = agent_state_2.num_returned - agent_state_1.num_returned
     
-    features = [killed, died, collected, returned, food_dist_d, stationary]
-    weights = [0, -25, 2, 20, 1, -0.01]
+    features = [killed, died, collected, returned, food_dist_d, stationary, home_dist_d * agent_state_1.num_carrying]
+    weights = [0, -25, 2, 20, 1, -0.01, 0.05]
     return np.dot(features, weights)
 
 def state_to_feature(agent, game_state):
     distance_to_food = []
     distance_to_home = []
-    action_dirs = [[0, -1], [1, 0], [0, 1], [-1, 0]]
+    if not agent.red:
+        action_dirs = [[0, -1], [1, 0], [0, 1], [-1, 0]]
+    else:
+        action_dirs = [[0, 1], [-1, 0], [0, -1], [1, 0]]
     pos = agent.intify(game_state.data.agent_states[agent.index].configuration.pos)
     distance_to_food_curr = agent.closest_food(game_state, pos)[0]
     distance_to_home_curr = agent.maze_distance(pos, agent.start)
@@ -108,7 +130,7 @@ def state_to_feature(agent, game_state):
 
 
 def state_to_pic(agent, game_state):
-    view_around = (6,6)
+    view_around = (4,4)
     pos = agent.intify(game_state.data.agent_states[agent.index].configuration.pos)
     pic = np.zeros((2, 2*view_around[0]+1, 2*view_around[1]+1))
     walls = game_state.data.layout.walls.data
@@ -130,6 +152,9 @@ def state_to_pic(agent, game_state):
             if abs(epos[1]-pos[1]) > view_around[1]:
                 continue
             pic[1, view_around[0] + epos[0] - pos[0], view_around[1] + epos[1] - pos[1]] = -1
+    if agent.red:
+        pic[0,:,:] = np.rot90(np.rot90(pic[0,:,:]))
+        pic[1,:,:] = np.rot90(np.rot90(pic[1,:,:]))
     return pic
 
 def get_transition(agent):
@@ -148,10 +173,10 @@ class DQN(nn.Module):
 
     def __init__(self):
         super(DQN, self).__init__()
-        self.conv2d = nn.Conv2d(2, 4, (4, 4))
+        self.conv2d = nn.Conv2d(2, 4, (3, 3))
         self.conv2d2 = nn.Conv2d(4, 8, (3, 3))
 
-        self.layer1 = nn.Linear(143, 128)
+        self.layer1 = nn.Linear(47, 128)
         self.layer2 = nn.Linear(128, 128)
         self.layer3 = nn.Linear(128, 5)
 
@@ -169,27 +194,27 @@ BATCH_SIZE = 128
 GAMMA = 0.95
 TAU = 0.005
 LR = 0.0005
-EPSILON = 0.6
+EPSILON = 0.85
 
 
 def optimize_model(agent):
     if len(agent.memory) < BATCH_SIZE:
         return
     transitions = agent.memory.sample(BATCH_SIZE)
-    state_batch = torch.tensor(np.array([state for (state, _, _, _, _, _, _) in transitions]), dtype=torch.float32)
-    f1 = torch.tensor(np.array([f1 for (_, f1, _, _, _, _, _) in transitions]), dtype=torch.float32)
+    state_batch = torch.tensor(np.array([state for (state, _, _, _, _, _, _) in transitions]), dtype=torch.float32).to(agent.device)
+    f1 = torch.tensor(np.array([f1 for (_, f1, _, _, _, _, _) in transitions]), dtype=torch.float32).to(agent.device)
     action_batch = torch.tensor([[action] for (_, _, action, _, _, _, _) in transitions])
     reward_batch =  torch.tensor([reward for (_, _, _, reward, _, _, _) in transitions])
-    next_state_batch = torch.tensor(np.array([s2 for (_, _, _, _, s2, _, _) in transitions]), dtype=torch.float32)
-    f2 = torch.tensor(np.array([f2 for (_, _, _, _, _, f2, _) in transitions]), dtype=torch.float32)
+    next_state_batch = torch.tensor(np.array([s2 for (_, _, _, _, s2, _, _) in transitions]), dtype=torch.float32).to(agent.device)
+    f2 = torch.tensor(np.array([f2 for (_, _, _, _, _, f2, _) in transitions]), dtype=torch.float32).to(agent.device)
     acs = [a for (_, _, _, _, _, _, a) in transitions]
 
 
-    state_qvalues = agent.policy_net(state_batch, f1)
+    state_qvalues = agent.policy_net(state_batch, f1).cpu()
     state_action_values = state_qvalues.squeeze(1).gather(1, action_batch).squeeze(1)
 
     with torch.no_grad():
-        next_qvalues = agent.target_net(next_state_batch, f2).squeeze(1).data
+        next_qvalues = agent.target_net(next_state_batch, f2).squeeze(1).cpu().data
         next_state_values = []
         for i, a_index in enumerate(acs):
             next_state_values.append(max([next_qvalues[i, a] for a in a_index]))
@@ -284,18 +309,26 @@ class ReflexCaptureAgent(CaptureAgent):
         self.go_home = False
         self.last_seen = None
         self.time = 0 
-        self.memory = Memory(10**5, ATTACK_MEMORY_PATH)
-        # self.device = torch.device(
-        #     "cuda" if torch.cuda.is_available() else
-        #     "mps" if torch.backends.mps.is_available() else
-        #     "cpu"
-        # )
-        self.target_net = DQN()
-        self.target_net.load_state_dict(torch.load(MODEL_PATH, weights_only=True))
-        self.policy_net = DQN()
-        # self.policy_net.load_state_dict(self.target_net.state_dict())
-        self.policy_net.load_state_dict(torch.load(MODEL_PATH+"_policy", weights_only=True))
-        self.optimizer = optim.AdamW(self.policy_net.parameters(), lr=LR, amsgrad=True)
+        if TRAINING:
+            self.memory = Memory(10**5, ATTACK_MEMORY_PATH)
+        self.device = torch.device(
+            "cuda" if torch.cuda.is_available() else
+            "mps" if torch.backends.mps.is_available() else
+            "cpu"
+        )
+        print(self.device)
+        self.target_net = DQN().to(self.device)
+        try:
+            self.target_net.load_state_dict(torch.load(MODEL_PATH, weights_only=True))
+        except Exception as e:
+            pass
+        if TRAINING:
+            self.policy_net = DQN().to(self.device)
+            try:
+                self.policy_net.load_state_dict(torch.load(MODEL_PATH+"_policy", weights_only=True))
+            except Exception as e:
+                self.policy_net.load_state_dict(self.target_net.state_dict())
+            self.optimizer = optim.AdamW(self.policy_net.parameters(), lr=LR, amsgrad=True)
 
     def register_initial_state(self, game_state):
         self.start = game_state.get_agent_position(self.index)
@@ -433,63 +466,70 @@ class OffensiveReflexAgent(ReflexCaptureAgent):
         return min(distances)
 
     def choose_action(self, game_state):
-        if game_state.data.timeleft <= 40:
-            with open(ATTACK_MEMORY_PATH, 'wb') as f:
-                pickle.dump(self.memory.memory, f)
-            torch.save(self.target_net.state_dict(), MODEL_PATH)
-            torch.save(self.policy_net.state_dict(), MODEL_PATH+"_policy")
+        if TRAINING:
+            if game_state.data.timeleft <= 20:
+                with open(ATTACK_MEMORY_PATH, 'wb') as f:
+                    pickle.dump(self.memory.memory, f)
+                torch.save(self.target_net.state_dict(), MODEL_PATH)
+                torch.save(self.policy_net.state_dict(), MODEL_PATH+"_policy")
 
-        if len(self.observation_history) > 1:
-            (s1, f1, action, reward, s2, f2, acs) = get_transition(self)
-            self.memory.push((s1, f1, action, reward, s2, f2, acs))
-            optimize_model(self)
-        with torch.no_grad():
-            input = state_to_pic(self, game_state)
-            f = state_to_feature(self, game_state)
-            # print(input)
-            # print(f)
-            res = self.target_net(torch.tensor(input, dtype=torch.float32), torch.tensor(f, dtype=torch.float32))
-            # print(res)
-            actions = game_state.get_legal_actions(self.index)[:-1]
-            ids = [get_action_index(action) for action in actions]
-            values = [res[id] for id in ids]
-            if random.random() < EPSILON:
-                move = ids[np.argmax(values)]
-                # print(move)
-            else:
-                move = np.random.choice(ids)
-            action = get_action_name(move)
-            return action
+            if len(self.observation_history) > 1:
+                (s1, f1, action, reward, s2, f2, acs) = get_transition(self)
+                self.memory.push((s1, f1, action, reward, s2, f2, acs))
+                optimize_model(self)
+        pos = game_state.data.agent_states[self.index].configuration.pos
+        distance_home = self.maze_distance(pos, self.start)
+        distance_food = self.closest_food(game_state, pos)[0]
+        if distance_home/(distance_home+distance_food) > NETWORK_DISTANCE:
+            with torch.no_grad():
+                input = state_to_pic(self, game_state)
+                f = state_to_feature(self, game_state)
+                res = self.target_net(torch.tensor(input, dtype=torch.float32).to(self.device), torch.tensor(f, dtype=torch.float32).to(self.device)).cpu()
+                actions = game_state.get_legal_actions(self.index)[:-1]
+                ids = [get_action_index(action) for action in actions]
+                values = [res[id] for id in ids]
+                if random.random() < EPSILON:
+                    move = ids[np.argmax(values)]
+                else:
+                    move = np.random.choice(ids)
+                action = get_action_name(move)
+                if self.red:
+                    action = invert_action(action)
+                return action
+        else:
+            return self.choose_action_minmax(game_state)
         
 
-    def choose_action_save(self, game_state):
-        if game_state.data.timeleft <= 40:
-            with open(ATTACK_MEMORY_PATH, 'wb') as f:
-                pickle.dump(self.memory.memory, f)
-        if len(self.observation_history) > 1:
-            (s1, f1, action, reward, s2, f2, acs) = get_transition(self)
-            self.memory.push((s1, f1, action, reward, s2, f2, acs))
-        # if self.go_home and game_state.data.agent_states[self.index].num_carrying == 0:
-        #     self.go_home = False
+    def choose_action_minmax(self, game_state):
+        if TRAINING:
+            if game_state.data.timeleft <= 20:
+                with open(ATTACK_MEMORY_PATH, 'wb') as f:
+                    pickle.dump(self.memory.memory, f)
+            if len(self.observation_history) > 1:
+                (s1, f1, action, reward, s2, f2, acs) = get_transition(self)
+                self.memory.push((s1, f1, action, reward, s2, f2, acs))
         pos = game_state.data.agent_states[self.index].configuration.pos
         pos = (int(pos[0]), int(pos[1]))
         opps = [opp for opp in self.get_opponents(game_state) if game_state.data.agent_states[opp].configuration is not None]
         opps = [opp for opp in opps if self.maze_distance(pos, game_state.data.agent_states[opp].configuration.pos) < 6]
         closest_food = self.closest_food(game_state, pos)
-        # if not self.go_home:
-        #     self.go_home = self.should_go_home(game_state, pos, opps, closest_food)
-        # if self.go_home:
         if game_state.data.agent_states[self.index].num_carrying > 3:
             if len(opps) > 0:
                 res = self.max_agent(game_state, [self.index] + opps, 0, 0, self.avoid_heur, self.prune)
                 return res[1]
-            return self.calculate_move(game_state, pos, self.start)
+            move = self.calculate_move(game_state, pos, self.start)
+            if move is None:
+                move = 'Stop'
+            return move
         else:
             if len(opps) > 0:
                 res = self.max_agent(game_state, [self.index] + opps, 0, 0, self.aggressive_heur, self.prune)
                 return res[1]
             
-            return self.calculate_move(game_state, pos, closest_food[1])
+            move = self.calculate_move(game_state, pos, closest_food[1])
+            if move is None:
+                move = 'Stop'
+            return move
         return 'Stop'
 
 
@@ -547,7 +587,13 @@ class DefensiveReflexAgent(ReflexCaptureAgent):
         opps = [opp for opp in self.get_opponents(game_state) if game_state.data.agent_states[opp].configuration is not None]
         opps = [opp for opp in opps if self.maze_distance(pos, game_state.data.agent_states[opp].configuration.pos) < 6]
         if len(opps) > 0:
-            return self.max_agent(game_state, [self.index]+opps, 0, 0, self.heur, self.prune)[1]
+            move =  self.max_agent(game_state, [self.index]+opps, 0, 0, self.heur, self.prune)[1]
+            if move is None:
+                move = 'Stop'
+            return move
         else:
             target = (ind[0] + interesting[0][0], ind[1])
-            return self.calculate_move(game_state, pos, target)
+            move = self.calculate_move(game_state, pos, target)
+            if move is None:
+                move = 'Stop'
+            return move
