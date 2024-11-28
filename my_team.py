@@ -1,3 +1,11 @@
+import os
+import sys
+
+cd = os.path.dirname(os.path.abspath(__file__))
+print(cd)
+sys.path.append(cd)
+print(f"PATH: {sys.path}")
+
 # my_team.py
 # ---------------
 # Licensing Information: Please do not distribute or publish solutions to this
@@ -22,7 +30,7 @@ import torch.optim as optim
 import torch.nn.functional as F
 import pickle
 
-TRAINING = True
+TRAINING = False
 NETWORK_DISTANCE = 0.65
 
 def get_action_index(action):
@@ -125,10 +133,6 @@ def state_to_feature(agent, game_state):
     extra_features.append(1/(distance_to_home_curr+1))
     return np.array(distance_to_food + distance_to_home + dist_to_opps + extra_features)
 
-
-
-
-
 def state_to_pic(agent, game_state):
     view_around = (4,4)
     pos = agent.intify(game_state.data.agent_states[agent.index].configuration.pos)
@@ -194,7 +198,7 @@ BATCH_SIZE = 128
 GAMMA = 0.95
 TAU = 0.005
 LR = 0.0005
-EPSILON = 0.85
+EPSILON = 0.9
 
 
 def optimize_model(agent):
@@ -237,8 +241,8 @@ def optimize_model(agent):
     agent.target_net.load_state_dict(target_net_state_dict)
 
     
-ATTACK_MEMORY_PATH = "../../../attack_memory.pkl"
-MODEL_PATH = "../../../attacker_model"
+ATTACK_MEMORY_PATH = os.path.join(cd, "attack_memory.pkl")
+MODEL_PATH =  os.path.join(cd, "attacker_model")
 
 # ATTACK_MEMORY_PATH = "attack_memory.pkl"
 # MODEL_PATH = "attacker_model"
@@ -321,6 +325,7 @@ class ReflexCaptureAgent(CaptureAgent):
         try:
             self.target_net.load_state_dict(torch.load(MODEL_PATH, weights_only=True))
         except Exception as e:
+            print("Cannot find target net")
             pass
         if TRAINING:
             self.policy_net = DQN().to(self.device)
@@ -328,6 +333,7 @@ class ReflexCaptureAgent(CaptureAgent):
                 self.policy_net.load_state_dict(torch.load(MODEL_PATH+"_policy", weights_only=True))
             except Exception as e:
                 self.policy_net.load_state_dict(self.target_net.state_dict())
+                print("Cannot find policy net")
             self.optimizer = optim.AdamW(self.policy_net.parameters(), lr=LR, amsgrad=True)
 
     def register_initial_state(self, game_state):
@@ -486,6 +492,8 @@ class OffensiveReflexAgent(ReflexCaptureAgent):
                 f = state_to_feature(self, game_state)
                 res = self.target_net(torch.tensor(input, dtype=torch.float32).to(self.device), torch.tensor(f, dtype=torch.float32).to(self.device)).cpu()
                 actions = game_state.get_legal_actions(self.index)[:-1]
+                if self.red:
+                    actions = [invert_action(action) for action in actions]
                 ids = [get_action_index(action) for action in actions]
                 values = [res[id] for id in ids]
                 if random.random() < EPSILON:
