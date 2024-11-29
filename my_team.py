@@ -2,9 +2,7 @@ import os
 import sys
 
 cd = os.path.dirname(os.path.abspath(__file__))
-print(cd)
 sys.path.append(cd)
-print(f"PATH: {sys.path}")
 
 # my_team.py
 # ---------------
@@ -320,7 +318,6 @@ class ReflexCaptureAgent(CaptureAgent):
             "mps" if torch.backends.mps.is_available() else
             "cpu"
         )
-        print(self.device)
         self.target_net = DQN().to(self.device)
         try:
             self.target_net.load_state_dict(torch.load(MODEL_PATH, weights_only=True))
@@ -474,7 +471,7 @@ class OffensiveReflexAgent(ReflexCaptureAgent):
 
     def choose_action(self, game_state):
         if TRAINING:
-            if game_state.data.timeleft <= 20:
+            if game_state.data.timeleft <= 10:
                 with open(ATTACK_MEMORY_PATH, 'wb') as f:
                     pickle.dump(self.memory.memory, f)
                 torch.save(self.target_net.state_dict(), MODEL_PATH)
@@ -511,7 +508,7 @@ class OffensiveReflexAgent(ReflexCaptureAgent):
 
     def choose_action_minmax(self, game_state):
         if TRAINING:
-            if game_state.data.timeleft <= 20:
+            if game_state.data.timeleft <= 10:
                 with open(ATTACK_MEMORY_PATH, 'wb') as f:
                     pickle.dump(self.memory.memory, f)
             if len(self.observation_history) > 1:
