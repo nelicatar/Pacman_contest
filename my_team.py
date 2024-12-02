@@ -92,7 +92,7 @@ def get_attacker_reward(agent, s1, s2):
     returned = agent_state_2.num_returned - agent_state_1.num_returned
     
     features = [killed, died, collected, returned, food_dist_d, stationary, home_dist_d * agent_state_1.num_carrying]
-    weights = [0, -25, 2, 20, 1, -0.01, 0.05]
+    weights = [10, -50, 2, 20, 1, -0.01, 0.05]
     return np.dot(features, weights)
 
 def state_to_feature(agent, game_state):
@@ -129,10 +129,13 @@ def state_to_feature(agent, game_state):
     extra_features.append(int(game_state.data.agent_states[agent.index].is_pacman))
     extra_features.append(1/(distance_to_food_curr+1))
     extra_features.append(1/(distance_to_home_curr+1))
+    extra_features.append((1/(game_state.data.timeleft+1)))
+    enemy_scared = max([game_state.data.agent_states[opp].scared_timer for opp in opps])
+    extra_features.append(1/(enemy_scared+1))
     return np.array(distance_to_food + distance_to_home + dist_to_opps + extra_features)
 
 def state_to_pic(agent, game_state):
-    view_around = (4,4)
+    view_around = (5,5)
     pos = agent.intify(game_state.data.agent_states[agent.index].configuration.pos)
     pic = np.zeros((2, 2*view_around[0]+1, 2*view_around[1]+1))
     walls = game_state.data.layout.walls.data
@@ -172,13 +175,12 @@ def get_transition(agent):
             state_to_pic(agent, s2), state_to_feature(agent, s2), available_actions)
 
 class DQN(nn.Module):
-
     def __init__(self):
         super(DQN, self).__init__()
         self.conv2d = nn.Conv2d(2, 4, (3, 3))
         self.conv2d2 = nn.Conv2d(4, 8, (3, 3))
 
-        self.layer1 = nn.Linear(47, 128)
+        self.layer1 = nn.Linear(89, 128)
         self.layer2 = nn.Linear(128, 128)
         self.layer3 = nn.Linear(128, 5)
 
@@ -196,7 +198,7 @@ BATCH_SIZE = 128
 GAMMA = 0.95
 TAU = 0.005
 LR = 0.0005
-EPSILON = 0.9
+EPSILON = 0.6
 
 
 def optimize_model(agent):
@@ -312,7 +314,7 @@ class ReflexCaptureAgent(CaptureAgent):
         self.last_seen = None
         self.time = 0 
         if TRAINING:
-            self.memory = Memory(10**5, ATTACK_MEMORY_PATH)
+            self.memory = Memory(10**5//2, ATTACK_MEMORY_PATH)
         self.device = torch.device(
             "cuda" if torch.cuda.is_available() else
             "mps" if torch.backends.mps.is_available() else
@@ -476,15 +478,15 @@ class OffensiveReflexAgent(ReflexCaptureAgent):
                     pickle.dump(self.memory.memory, f)
                 torch.save(self.target_net.state_dict(), MODEL_PATH)
                 torch.save(self.policy_net.state_dict(), MODEL_PATH+"_policy")
-
-            if len(self.observation_history) > 1:
-                (s1, f1, action, reward, s2, f2, acs) = get_transition(self)
-                self.memory.push((s1, f1, action, reward, s2, f2, acs))
-                optimize_model(self)
         pos = game_state.data.agent_states[self.index].configuration.pos
         distance_home = self.maze_distance(pos, self.start)
         distance_food = self.closest_food(game_state, pos)[0]
         if distance_home/(distance_home+distance_food) > NETWORK_DISTANCE:
+            if TRAINING:
+                if len(self.observation_history) > 1:
+                    (s1, f1, action, reward, s2, f2, acs) = get_transition(self)
+                    self.memory.push((s1, f1, action, reward, s2, f2, acs))
+                    optimize_model(self)
             with torch.no_grad():
                 input = state_to_pic(self, game_state)
                 f = state_to_feature(self, game_state)
