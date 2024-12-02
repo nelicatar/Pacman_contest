@@ -28,8 +28,8 @@ import torch.optim as optim
 import torch.nn.functional as F
 import pickle
 
-TRAINING = False
-NETWORK_DISTANCE = 0.65
+TRAINING = True
+NETWORK_DISTANCE = 0.7
 
 def get_action_index(action):
     if action == "South":
@@ -198,27 +198,27 @@ BATCH_SIZE = 128
 GAMMA = 0.95
 TAU = 0.005
 LR = 0.0005
-EPSILON = 0.6
+EPSILON = 0.8
 
 
 def optimize_model(agent):
     if len(agent.memory) < BATCH_SIZE:
         return
     transitions = agent.memory.sample(BATCH_SIZE)
-    state_batch = torch.tensor(np.array([state for (state, _, _, _, _, _, _) in transitions]), dtype=torch.float32).to(agent.device)
-    f1 = torch.tensor(np.array([f1 for (_, f1, _, _, _, _, _) in transitions]), dtype=torch.float32).to(agent.device)
+    state_batch = torch.tensor(np.array([state for (state, _, _, _, _, _, _) in transitions]), dtype=torch.float32)
+    f1 = torch.tensor(np.array([f1 for (_, f1, _, _, _, _, _) in transitions]), dtype=torch.float32)
     action_batch = torch.tensor([[action] for (_, _, action, _, _, _, _) in transitions])
     reward_batch =  torch.tensor([reward for (_, _, _, reward, _, _, _) in transitions])
-    next_state_batch = torch.tensor(np.array([s2 for (_, _, _, _, s2, _, _) in transitions]), dtype=torch.float32).to(agent.device)
-    f2 = torch.tensor(np.array([f2 for (_, _, _, _, _, f2, _) in transitions]), dtype=torch.float32).to(agent.device)
+    next_state_batch = torch.tensor(np.array([s2 for (_, _, _, _, s2, _, _) in transitions]), dtype=torch.float32)
+    f2 = torch.tensor(np.array([f2 for (_, _, _, _, _, f2, _) in transitions]), dtype=torch.float32)
     acs = [a for (_, _, _, _, _, _, a) in transitions]
 
 
-    state_qvalues = agent.policy_net(state_batch, f1).cpu()
+    state_qvalues = agent.policy_net(state_batch, f1)
     state_action_values = state_qvalues.squeeze(1).gather(1, action_batch).squeeze(1)
 
     with torch.no_grad():
-        next_qvalues = agent.target_net(next_state_batch, f2).squeeze(1).cpu().data
+        next_qvalues = agent.target_net(next_state_batch, f2).squeeze(1).data
         next_state_values = []
         for i, a_index in enumerate(acs):
             next_state_values.append(max([next_qvalues[i, a] for a in a_index]))
@@ -315,22 +315,17 @@ class ReflexCaptureAgent(CaptureAgent):
         self.time = 0 
         if TRAINING:
             self.memory = Memory(10**5//2, ATTACK_MEMORY_PATH)
-        self.device = torch.device(
-            "cuda" if torch.cuda.is_available() else
-            "mps" if torch.backends.mps.is_available() else
-            "cpu"
-        )
-        self.target_net = DQN().to(self.device)
+        self.target_net = DQN()
         try:
-            self.target_net.load_state_dict(torch.load(MODEL_PATH, weights_only=True))
+            self.target_net.load_state_dict(torch.load(MODEL_PATH, weights_only=True, map_location=torch.device('cpu')))
         except Exception as e:
             if not TRAINING:
                 raise(Exception(e))
             print("Cannot find target net")
         if TRAINING:
-            self.policy_net = DQN().to(self.device)
+            self.policy_net = DQN()
             try:
-                self.policy_net.load_state_dict(torch.load(MODEL_PATH+"_policy", weights_only=True))
+                self.policy_net.load_state_dict(torch.load(MODEL_PATH+"_policy", weights_only=True, map_location=torch.device('cpu')))
             except Exception as e:
                 self.policy_net.load_state_dict(self.target_net.state_dict())
                 print("Cannot find policy net")
@@ -490,7 +485,7 @@ class OffensiveReflexAgent(ReflexCaptureAgent):
             with torch.no_grad():
                 input = state_to_pic(self, game_state)
                 f = state_to_feature(self, game_state)
-                res = self.target_net(torch.tensor(input, dtype=torch.float32).to(self.device), torch.tensor(f, dtype=torch.float32).to(self.device)).cpu()
+                res = self.target_net(torch.tensor(input, dtype=torch.float32), torch.tensor(f, dtype=torch.float32))
                 actions = game_state.get_legal_actions(self.index)[:-1]
                 if self.red:
                     actions = [invert_action(action) for action in actions]
