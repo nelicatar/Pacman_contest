@@ -213,9 +213,9 @@ class OffensiveAgent(MinimaxAgent):
 class DefensiveAgent(MinimaxAgent):
     def get_interesting_positions(self, shape):
         if not self.red:
-            return ((shape[0]//2, 5*shape[0]//6), (0, shape[1]))
+            return ((shape[0]//2, 3*shape[0]//4), (0, shape[1]))
         else:
-            return ((shape[0]//6, shape[0]//2), (0, shape[1]))
+            return ((shape[0]//4, shape[0]//2), (0, shape[1]))
     
     def get_distance_to_agent(self, game_state, agent):
         pos = game_state.data.agent_states[self.index].configuration.pos
