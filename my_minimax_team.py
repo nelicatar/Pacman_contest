@@ -114,6 +114,11 @@ class MinimaxAgent(CaptureAgent):
             if min_val < alpha:
                 return min_val
         return min_val
+    
+    def recently_died(self, game_state, player):
+        start = game_state.data.agent_states[player].start.pos
+        pos = game_state.data.agent_states[player].configuration.pos
+        return self.maze_distance(start, pos) < 5
 
     def intify(self, pos):
             return (int(pos[0]), int(pos[1]))
@@ -160,13 +165,15 @@ class OffensiveAgent(MinimaxAgent):
         return closest_food
 
     def aggressive_heur(self, game_state, players):
+        opps = self.get_opponents(game_state)
         pos = game_state.data.agent_states[self.index].configuration.pos
-        dist = self.maze_distance(pos, self.start)
-        if dist < 10:
-            return -10**9
-        if not game_state.data.agent_states[self.index].is_pacman:
-            return 5 - (1/dist if dist > 0 else 0)
-        return 1/dist
+        carrying = game_state.data.agent_states[self.index].num_carrying
+        returned = game_state.data.agent_states[self.index].num_returned
+        food_distance = self.closest_food(game_state, pos)[0]
+        killed = sum(1 for player in players[1:] if self.recently_died(game_state, player))
+        died = int(self.recently_died(game_state, self.index))
+        enemy_scared = sum([game_state.data.agent_states[opp].scared_timer for opp in opps])
+        return 1/(food_distance+1) + carrying + 10 * returned + 100 * killed - 100 * died + int(enemy_scared > 0)
 
     def should_go_home(self, game_state, pos, opps, closest_food):
         carrying = game_state.data.agent_states[self.index].num_carrying
@@ -181,8 +188,15 @@ class OffensiveAgent(MinimaxAgent):
         return False
 
     def avoid_heur(self, game_state, players):
-        distances = [game_state.agent_distances[i] for i in self.get_opponents(game_state)]
-        return min(distances)
+        opps = self.get_opponents(game_state)
+        pos = game_state.data.agent_states[self.index].configuration.pos
+        carrying = game_state.data.agent_states[self.index].num_carrying
+        returned = game_state.data.agent_states[self.index].num_returned
+        home_distance = self.maze_distance(pos, self.start)
+        killed = sum(1 for player in players[1:] if self.recently_died(game_state, player))
+        died = int(self.recently_died(game_state, self.index))
+        enemy_scared = sum([game_state.data.agent_states[opp].scared_timer for opp in opps])
+        return 1/(home_distance+1) + carrying + 10 * returned + 100 * killed - 100 * died + + int(enemy_scared > 0)
     
     def choose_action(self, game_state):
         pos = game_state.data.agent_states[self.index].configuration.pos
@@ -222,11 +236,6 @@ class DefensiveAgent(MinimaxAgent):
         enemy_pos = game_state.data.agent_states[agent].configuration.pos
         return self.maze_distance(pos, enemy_pos)
 
-    def recently_died(self, game_state, player):
-        start = game_state.data.agent_states[player].start.pos
-        pos = game_state.data.agent_states[player].configuration.pos
-        return self.maze_distance(start, pos) < 5
-
     def prune(self, game_state):
         return game_state.data.agent_states[self.index].is_pacman
 
@@ -248,6 +257,8 @@ class DefensiveAgent(MinimaxAgent):
         return missing
 
     def choose_action(self, game_state):
+        opps = [opp for opp in self.get_opponents(game_state) if game_state.data.agent_states[opp].configuration is not None]
+        opps = [opp for opp in opps if game_state.data.agent_states[opp].is_pacman]
         if len(self.observation_history) > 1:
             foods = self.get_food_you_are_defending(game_state)
             last_foods = self.get_food_you_are_defending(game_state)
@@ -261,9 +272,6 @@ class DefensiveAgent(MinimaxAgent):
         interesting = self.get_interesting_positions(self.last_seen.shape)
         area = self.last_seen[interesting[0][0]:interesting[0][1],interesting[1][0]:interesting[1][1]]
         ind = np.unravel_index(np.argmin(area, axis=None), area.shape)
-        opps = [opp for opp in self.get_opponents(game_state) if game_state.data.agent_states[opp].configuration is not None]
-        opps = [opp for opp in opps if self.maze_distance(pos, game_state.data.agent_states[opp].configuration.pos) < 6]
-        opps = [opp for opp in opps if game_state.data.agent_states[opp].is_pacman]
         if len(opps) > 0:
             move =  self.max_agent(game_state, [self.index]+opps, 0, 0, self.heur, self.prune)[1]
             if move is None:
