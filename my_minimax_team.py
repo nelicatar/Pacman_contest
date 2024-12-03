@@ -1,9 +1,6 @@
 import os
 import sys
 
-cd = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(cd)
-
 # my_team.py
 # ---------------
 # Licensing Information: Please do not distribute or publish solutions to this
@@ -20,67 +17,14 @@ from contest.game import Directions
 from contest.util import nearest_point
 import numpy as np
 import random
-from collections import namedtuple, deque
 
-def get_action_index(action):
-    if action == "South":
-        return 0
-    if action == "East":
-        return 1
-    if action == "North":
-        return 2
-    if action == "West":
-        return 3
-    return 4
-
-def invert_action(action):
-    if action == "South":
-        return "North"
-    if action == "North":
-        return "South"
-    if action == "West":
-        return "East"
-    if action == "East":
-        return "West"
-    return action
-
-def get_action_name(index):
-    actions = ["South", "East", "North", "West", "Stop"]
-    return actions[int(index)]
-
-
-#################
-# Team creation #
-#################
 
 def create_team(first_index, second_index, is_red,
-                first='OffensiveReflexAgent', second='DefensiveReflexAgent', num_training=0):
-    """
-    This function should return a list of two agents that will form the
-    team, initialized using firstIndex and secondIndex as their agent
-    index numbers.  isRed is True if the red team is being created, and
-    will be False if the blue team is being created.
-
-    As a potentially helpful development aid, this function can take
-    additional string-valued keyword arguments ("first" and "second" are
-    such arguments in the case of this function), which will come from
-    the --red_opts and --blue_opts command-line arguments to capture.py.
-    For the nightly contest, however, your team will be created without
-    any extra arguments, so you should make sure that the default
-    behavior is what you want for the nightly contest.
-    """
+                first='HibridAgent', second='DefensiveAgent', num_training=0):
     return [eval(first)(first_index), eval(second)(second_index)]
 
 
-##########
-# Agents #
-##########
-
-class ReflexCaptureAgent(CaptureAgent):
-    """
-    A base class for reflex agents that choose score-maximizing actions
-    """
-
+class MinimaxAgent(CaptureAgent):
     def __init__(self, index, time_for_computing=.1):
         super().__init__(index, time_for_computing)
         self.start = None
@@ -124,14 +68,6 @@ class ReflexCaptureAgent(CaptureAgent):
             return successor.generate_successor(index, action)
         else:
             return successor
-
-    def evaluate(self, game_state, action):
-        """
-        Computes a linear combination of features and feature weights
-        """
-        features = self.get_features(game_state, action)
-        weights = self.get_weights(game_state, action)
-        return features * weights
 
     def calculate_move(self, game_state, pos1, pos2):
         dirs = [([1,0], 'East'), ([-1, 0], 'West'), ([0, -1], 'South'), ([0, 1], 'North')]
@@ -184,8 +120,35 @@ class ReflexCaptureAgent(CaptureAgent):
 
     def maze_distance(self, pos1, pos2):
         return self.get_maze_distance(self.intify(pos1), self.intify(pos2))
+    
+class HibridAgent(MinimaxAgent):
+    def __init__(self, index, time_for_computing=0.1):
+        super().__init__(index, time_for_computing) 
 
-class OffensiveReflexAgent(ReflexCaptureAgent):
+        self.offense = OffensiveAgent(index, time_for_computing)
+        self.defense = DefensiveAgent(index, time_for_computing)
+
+    def winning(self, game_state):
+        if self.red:
+            return game_state.data.score > 0
+        else:
+            return game_state.data.score < 0
+
+    def register_initial_state(self, game_state):
+        super().register_initial_state(game_state)
+        self.offense.register_initial_state(game_state)
+        self.defense.register_initial_state(game_state)
+
+    def choose_action(self, game_state):
+        offense_move = self.offense.choose_action(game_state)
+        defense_move = self.defense.choose_action(game_state)
+        if self.winning(game_state):
+            return defense_move
+        else:
+            return offense_move
+    
+
+class OffensiveAgent(MinimaxAgent):
     def closest_food(self, game_state, pos):
         foods = self.get_food(game_state)
         closest_food = (10**9, None)
@@ -204,8 +167,6 @@ class OffensiveReflexAgent(ReflexCaptureAgent):
         if not game_state.data.agent_states[self.index].is_pacman:
             return 5 - (1/dist if dist > 0 else 0)
         return 1/dist
-        # closest_food = self.closest_food(game_state, pos)
-        # return 1/closest_food[0] + game_state.data.agent_states[self.index].num_carrying
 
     def should_go_home(self, game_state, pos, opps, closest_food):
         carrying = game_state.data.agent_states[self.index].num_carrying
@@ -249,12 +210,12 @@ class OffensiveReflexAgent(ReflexCaptureAgent):
         return 'Stop'
 
 
-class DefensiveReflexAgent(ReflexCaptureAgent):
+class DefensiveAgent(MinimaxAgent):
     def get_interesting_positions(self, shape):
         if not self.red:
-            return ((shape[0]//2, 2*shape[0]//3), (0, shape[1]))
+            return ((shape[0]//2, 5*shape[0]//6), (0, shape[1]))
         else:
-            return ((shape[0]//3, shape[0]//2), (0, shape[1]))
+            return ((shape[0]//6, shape[0]//2), (0, shape[1]))
     
     def get_distance_to_agent(self, game_state, agent):
         pos = game_state.data.agent_states[self.index].configuration.pos
