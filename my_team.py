@@ -233,9 +233,9 @@ class HibridAgent(MinimaxAgent):
 
     def winning(self, game_state):
         if self.red:
-            return game_state.data.score > 0
+            return game_state.data.score >= 4
         else:
-            return game_state.data.score < 0
+            return game_state.data.score <= -4
 
     def register_initial_state(self, game_state):
         super().register_initial_state(game_state)
@@ -302,7 +302,7 @@ class OffensiveAgent(MinimaxAgent):
         opps = [opp for opp in self.get_opponents(game_state) if game_state.data.agent_states[opp].configuration is not None]
         opps = [opp for opp in opps if self.maze_distance(pos, game_state.data.agent_states[opp].configuration.pos) < 6]
         closest_food = self.closest_food(game_state, pos)
-        if game_state.data.agent_states[self.index].num_carrying > 3:
+        if game_state.data.agent_states[self.index].num_carrying > 4:
             if len(opps) > 0:
                 res = self.max_agent(game_state, [self.index] + opps, 0, 0, self.avoid_heur, self.prune)
                 return res[1]
