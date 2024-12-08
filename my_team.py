@@ -53,7 +53,27 @@ class MinimaxAgent(CaptureAgent):
         self.shape = shape
         self.enemy_probability = [[0.0 for _ in range(self.shape[1])] for _ in range(self.shape[0])]
 
+    def stuck_repeating(self, game_state):
+        repetitions_treshold = 5
+        moves = [state.data.agent_states[self.index].configuration.direction for state in self.observation_history]
+        moves = list(reversed(moves))
+        for i in range(2, 5):
+            if len(moves) < i*repetitions_treshold:
+                continue
+            f = moves[:i]
+            if len(set(f)) == 1:
+                continue
+            for x in range(repetitions_treshold*i):
+                m = f[x%i]
+                if moves[x] != m:
+                    break
+                if x == repetitions_treshold*i-1:
+                    return True
+        return False
+
     def guess_enemy_probability(self, game_state, decay=0.9):
+        # If there is new evidence update it
+        # Otherwise decay previous information
         for i in range(self.shape[0]):
             for j in range(self.shape[1]):
                 self.enemy_probability[i][j] *= decay
@@ -117,10 +137,13 @@ class MinimaxAgent(CaptureAgent):
                         paths[-1].append(curr)
                         return True
             return False
+        # Find paths from foods to enemy territory
         for i in range(self.shape[0]):
             for j in range(self.shape[1]):
                 if foods.data[i][j]:
-                    DFS((i,j))
+                    # Run it a bunch of times in case there are multiple paths out from here
+                    for _ in range(3):
+                        DFS((i,j))
         been = [[False for _ in range(self.shape[1])] for _ in range(self.shape[0])]
         cnt = [[0 for _ in range(self.shape[1])] for _ in range(self.shape[0])]
         def DFS(curr):
@@ -133,10 +156,13 @@ class MinimaxAgent(CaptureAgent):
                 elif not been[n[0]][n[1]]:
                     DFS(n)
             return False
+        # Count which part of paths is reachable from other foods
         for i in range(self.shape[0]):
             for j in range(self.shape[1]):
                 if not on_path[i][j] and foods.data[i][j]:
                     DFS((i,j))
+        # Find the last point on the path that is reachable, this is an ingress point to defend
+        # As everything should be behind this point
         ingress_points = []
         for path in paths:
             found = False
@@ -243,6 +269,11 @@ class HibridAgent(MinimaxAgent):
         self.defense.register_initial_state(game_state)
 
     def choose_action(self, game_state):
+        if self.stuck_repeating(game_state):
+            move = self.calculate_move(game_state, game_state.data.agent_states[self.index].configuration.pos, self.start)
+            if move is None:
+                move = 'Stop'
+            return move
         offense_move = self.offense.choose_action(game_state)
         defense_move = self.defense.choose_action(game_state)
         if self.winning(game_state):
@@ -294,7 +325,7 @@ class OffensiveAgent(MinimaxAgent):
         killed = sum(1 for player in players[1:] if self.recently_died(game_state, player))
         died = int(self.recently_died(game_state, self.index))
         enemy_scared = sum([game_state.data.agent_states[opp].scared_timer for opp in opps])
-        return 1/(home_distance+1) + carrying + 10 * returned + 100 * killed - 100 * died + + int(enemy_scared > 0)
+        return 1/(home_distance+1) + carrying * 0.8 + 10 * returned + 100 * killed - 100 * died + int(enemy_scared > 0)
     
     def choose_action(self, game_state):
         pos = game_state.data.agent_states[self.index].configuration.pos
@@ -357,6 +388,13 @@ class DefensiveAgent(MinimaxAgent):
     def choose_action(self, game_state):
         self.update_unseen_points(game_state)
         self.guess_enemy_probability(game_state)
+
+        if self.stuck_repeating(game_state):
+            move = self.calculate_move(game_state, game_state.data.agent_states[self.index].configuration.pos, self.start)
+            if move is None:
+                move = 'Stop'
+            return move
+
         opps = [opp for opp in self.get_opponents(game_state) if game_state.data.agent_states[opp].configuration is not None]
         opps = [opp for opp in opps if game_state.data.agent_states[opp].is_pacman]
         pos = game_state.data.agent_states[self.index].configuration.pos
